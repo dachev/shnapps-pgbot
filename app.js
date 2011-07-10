@@ -7,6 +7,7 @@ var _       = require('underscore');
 var Rest    = require('restler');
 
 module.exports = {
+    name   : 'pgbot',
     rest   : null,
     about  : about,
     init   : init
@@ -18,7 +19,7 @@ function init(server, pubsub) {
         Ejs     = require('ejs'),
         rest    = Express.createServer();
     
-    rest.use('/pgbot', Express.static(__dirname + '/public'));
+    rest.use(Express.static(__dirname + '/public'));
     
     // configure views
     rest.set('views', __dirname + '/views');
@@ -28,8 +29,8 @@ function init(server, pubsub) {
         rootPath: Path.join(__dirname, '../../')
     });
     
-    rest.get('/pgbot', getIndex);
-    rest.post('/pgbot/line', postLine);
+    rest.get('/', getIndex);
+    rest.post('/line', postLine);
     
     module.exports.rest = rest;
 }
