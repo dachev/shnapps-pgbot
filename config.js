@@ -15,7 +15,7 @@ module.exports = {
       path:'/solr'
     }
   },
-  production:{
+  staging:{
     services: {
       scrape : {
         url : 'http://blago.dachev.com/scrape/api/v1/scrape'
