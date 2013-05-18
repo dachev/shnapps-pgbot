@@ -8,23 +8,20 @@ module.exports = {
 
 function init(server, pubsub) {
   var undefined
-  var path        = require('path');
-  var express     = require('express');
-  var ejs         = require('ejs');
-  var _           = require('underscore');
-  var solr        = require('solr-client');
-  var config      = require('./config')[server.settings.env] || null;
-  var client      = solr.createClient(config.solr);
-  var rest        = express.createServer();
-  var total       = null;
+  var express = require('express');
+  var rest    = express();
+  var utml    = require('utml');
+  var path    = require('path');
+  var _       = require('underscore');
+  var solr    = require('solr-client');
+  var config  = require('./config')[server.settings.env] || null;
+  var client  = solr.createClient(config.solr);
+  var total   = null;
 
   // configure views
   rest.set('views', __dirname + '/views');
-  rest.register('.html', ejs);
   rest.set('view engine', 'html');
-  rest.helpers({
-    rootPath: path.join(__dirname, '../../')
-  });
+  rest.engine('html', utml.__express);
   
   rest.use(express.static(__dirname + '/public'));
   rest.get('/', getIndex);
@@ -99,20 +96,21 @@ function init(server, pubsub) {
     }
   }
   function renderJSONError(req, res, data) {
-    res.send(_.extend({
+    res.send(500, _.extend({
       message : '',
       payload : ''
     }, data, {success:false}));
   }
   function renderHTMLError(req, res, data) {
-    var viewPath   = path.join(req.app.parent.settings.views, '500');
-    var layoutPath = path.join(req.app.parent.settings.views, 'layout');
+    var viewPath = path.join(req.app.parent.settings.views, '500');
     
+    res.status(500);
     res.render(viewPath, {
-      status  : 500,
-      layout  : layoutPath,
-      request : req,
-      msg     : data.message
+      locals : {
+        status  : 500,
+        request : req,
+        msg     : data.message
+      }
     });
   }
   function renderSuccess(req, res, data) {
@@ -126,7 +124,7 @@ function init(server, pubsub) {
     }
   }
   function renderJSONSuccess(req, res, data) {
-    res.send(_.extend({
+    res.send(200, _.extend({
       message : '',
       payload : ''
     }, data, {success:true}));
