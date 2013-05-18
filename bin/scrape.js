@@ -1,102 +1,146 @@
 #!/usr/bin/env node
 
-var Url    = require('url');
-var Path   = require('path');
-var Fs     = require('fs');
-var Rest   = require('restler');
-var JsDom  = require('jsdom');
-var jQuery = require('jquery');
-var _      = require('underscore');
-var Valve  = require('../modules/valve');
+try {
+  var Url     = require('url');
+  var path    = require('path');
+  var fs      = require('fs');
+  var _       = require('underscore');
+  var colors  = require('colors');
+  var request = require('request');
+  var async   = require('async');
+  var program = require('commander'); parseArguments(program);
+  var config  = require('../config')[program.environment];
+}
+catch (ex) {
+  console.log(ex);
+  console.log('Did you install dependencies? Run: npm install.');
+  process.exit(1);
+}
 
-load('get', 'http://www.paulgraham.com/articles.html', null, null, null, function(err, $) {
-    var links = $('table').eq(2).find('a').toArray();
-    var hrefs = _.reduce(links, function(memo, item, key) {
-        var $item = $(item);
-        var href  = $item.attr('href')||'';
-        
-        if (href.match(/\.html$/)) {
-            memo.push('http://www.paulgraham.com/' + href);
-        }
-        
-        return memo;
-    }, []);
-    
-    var name  = Path.join(__dirname, '../data/articles.txt')
-    var file  = Fs.createWriteStream(name);
-    var valve = new Valve(load, 3);
-    valve.on('result', function(err, $) {
-        if (err) { return; }
-        
-        var text = $('body table').eq(0).text().replace(/\n/g, ' ').replace(/\s+/m, ' ');
-        file.write(text);
-    });
-    valve.on('empty', function() {
-        console.log('===========');
-    });
-    
-    for (var i = 0; i < hrefs.length; i++) {
-        valve.push('get', hrefs[i], null, null, null);
-    }
-});
+scrapeIndex(config);
 
-function load(method, url, query, data, options, func) {
-    method = method.toLowerCase();
-    
-    var parsers = {
-        auto: function(data, callback) {
-            var contentType = this.headers['content-type'];
-            
-            if (contentType) {
-                for (var matcher in parsers.auto.matchers) {
-                    if (contentType.indexOf(matcher) == 0) {
-                        return parsers.auto.matchers[matcher].call(this, data, callback);
-                    }
-                }
-            }
-        
-            callback(data);
-        },
-        json: function(data, callback) {
-            callback(data && JSON.parse(data));
-        },
-        html: function(data, callback) {
-            var body = data.
-                replace(/<(\/?)script/g, '<$1nobreakage').
-                replace(/<(\/?)style/g, '<$1nobreakage').
-                replace(/<(\/?)link/g, '<$1nobreakage');
-            
-            var options   = {features:{'FetchExternalResources':false, 'ProcessExternalResources':false}}
-                ,dom      = JsDom.jsdom(body, null, options)
-                ,window   = dom.createWindow()
-                ,document = window.document;
-            
-            callback(jQuery.create(window));
+function scrapeIndex(config) {
+  var indexUrl = Url.format({
+    protocol : 'http',
+    hostname : 'www.paulgraham.com',
+    pathname : '/articles.html',
+    query    : {}
+  });
+
+  var include = [
+    'https://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.4.4/underscore-min.js'
+  ];
+
+  var script  = extractLinks.toString();
+  var form    = {url:indexUrl, script:script, include:include};
+  var apiUrl  = config.services.scrape.url;
+  var options = {url:apiUrl, json:true, form:form};
+
+  request.post(options, function(err, res, json) {
+    // error
+    if (err) {
+      console.error(err.message.red);
+      return process.exit(1);
+    }
+    if (json == null) {
+      var message = 'Error loading: ' + indexUrl;
+      console.error(message.red);
+      return process.exit(1);
+    }
+    if (!json.success) {
+      console.error(json.message.red);
+      return process.exit(1);
+    }
+
+    // success
+    async.mapLimit(json.payload, 1, scrapePage, function(err, results) {
+      // error
+      if (err) {
+        console.error(err.message.red);
+        return process.exit(1);
+      }
+
+      // success
+      var text     = JSON.stringify(results, null, '  ');
+      var filename = path.join(__dirname, '../data/articles.json');
+
+      fs.writeFile(filename, text, function(err) {
+        // error
+        if (err) {
+          console.error(err.message.red);
+          return process.exit(1);
         }
-    };
-    parsers.auto.matchers = {
-        'application/json' : parsers.json,
-        'text/html'        : parsers.html
-    };
-    
-    options = _.extend({}, options||{}, {
-        followRedirects : true,
-        parser          : parsers.auto
+
+        console.log('done'.green);
+      });
     });
-    
-    options.headers = _.extend({
-        'Content-Type':'application/json; charset=UTF-8'
-    }, options.headers||{});
-    
-    if (query) {
-        options.query = query;
+  });
+}
+
+function scrapePage(articleUrl, cb) {
+  var include = [
+    'https://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js'
+  ];
+
+  var script  = extractContent.toString();
+  var form    = {url:articleUrl, script:script, include:include};
+  var apiUrl  = config.services.scrape.url;
+  var options = {url:apiUrl, json:true, form:form};
+
+  console.log(articleUrl.yellow);
+
+  request.post(options, function(err, res, json) {
+    // error
+    if (err) {
+      return cb(err);
     }
-    
-    if (data) {
-        options.data = data;
+    if (json == null) {
+      return cb({message:'Unknown error loading: ' + articleUrl + ': unknown'});
     }
-    
-    var request = Rest[method](url, options);
-    request.on('success', function($) { func(null, $); });
-    request.on('error', function(err) { func(err, null); });
+    if (!json.success) {
+      return cb({message:json.message});
+    }
+
+    //success
+    cb(null, json.payload);
+  });
+}
+
+function extractLinks() {
+  var links = $('table').eq(2).find('a').toArray();
+  var hrefs = _.reduce(links, function(memo, item, key) {
+      var $item = $(item);
+      var href  = $item.attr('href')||'';
+      
+      if (href.match(/\.html$/)) {
+          memo.push('http://www.paulgraham.com/' + href);
+      }
+      
+      return memo;
+  }, []);
+
+  return hrefs;
+}
+
+function extractContent() {
+  var $body = $('body');
+
+  $body.eq(0).find('script').remove();
+  $body.eq(0).find('script').remove();
+
+  return $body.find('table').eq(0).text().replace(/\n/g, ' ').replace(/\s+/m, ' ');
+}
+
+function parseArguments(program) {
+  program
+    .version('0.0.1')
+    .usage('[options]')
+    .option('-e, --environment <name>', 'Environment', String, process.env.NODE_ENV)
+    .parse(process.argv);
+
+  if (!program.environment) {
+    console.error('No environment specified.'.red)
+    process.exit(1);
+  }
 }

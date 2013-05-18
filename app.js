@@ -1,122 +1,175 @@
-var about   = [];
-var host    = '127.0.0.1';
-var port    = 8080;
-var core    = 'pgbot';
-var solrUrl = 'http://' + host + ':' + port + '/solr/' + core + '/select';
-var _       = require('underscore');
-var Rest    = require('restler');
-
 module.exports = {
-    name   : 'pgbot',
-    rest   : null,
-    about  : about,
-    init   : init
+  name   : 'pgbot',
+  hidden : false,
+  rest   : null,
+  about  : [],
+  init   : init
 };
 
 function init(server, pubsub) {
-    var Path    = require('path'),
-        Express = require('express'),
-        Ejs     = require('ejs'),
-        rest    = Express.createServer();
-    
-    rest.use(Express.static(__dirname + '/public'));
-    
-    // configure views
-    rest.set('views', __dirname + '/views');
-    rest.register('.html', Ejs);
-    rest.set('view engine', 'html');
-    rest.helpers({
-        rootPath: Path.join(__dirname, '../../')
+  var undefined
+  var path        = require('path');
+  var express     = require('express');
+  var ejs         = require('ejs');
+  var _           = require('underscore');
+  var solr        = require('solr-client');
+  var config      = require('./config')[server.settings.env] || null;
+  var client      = solr.createClient(config.solr);
+  var rest        = express.createServer();
+  var total       = null;
+
+  // configure views
+  rest.set('views', __dirname + '/views');
+  rest.register('.html', ejs);
+  rest.set('view engine', 'html');
+  rest.helpers({
+    rootPath: path.join(__dirname, '../../')
+  });
+  
+  rest.use(express.static(__dirname + '/public'));
+  rest.get('/', getIndex);
+  rest.post('/api/line', postLine);
+  
+  function getIndex(req, res, next) {
+    if (isReady() == false) { return showError(req, res, next); }
+
+    res.render('index', {});
+  }
+
+  function postLine(req, res, next) {
+    if (isReady() == false) { return showError(req, res, next); }
+
+    if (!req.body) {
+      return renderError(req, res, 400, {
+        message:'Missing arguments'
+      });
+    }
+    if (!req.body.text) {
+      return renderError(req, res, 400, {
+        message:'Missing argument: text'
+      });
+    }
+    if (_.isString(req.body.text) == false) {
+      return renderError(req, res, 400, {
+        message:'Invalid argument: text'
+      });
+    }
+
+    var text  = req.body.text;
+    var query = client.createQuery().q(text).start(0).rows(3);
+
+    client.search(query, function(err, json) {
+      if (err) {
+        return renderError(req, res, 500, {
+          message:'search server error'
+        });
+      }
+      if (!json.response || !json.response.docs) {
+        return renderError(req, res, 500, {
+          message:'search server error'
+        });
+      }
+
+      var docs = json.response.docs;
+      if (docs.length < 1) {
+        docs = [{text:'I don\'t know what to tell you'}];
+      }
+      
+      var idx = Math.round(Math.random()*(docs.length-1))
+      var doc = docs[idx] || {text:'I don\'t know what to tell you'};
+
+      if (doc.text == text) {
+        doc = {text:'I don\'t know what to tell you'};
+      }
+
+      return renderSuccess(req, res, {payload:doc.text});
     });
     
-    rest.get('/', getIndex);
-    rest.post('/line', postLine);
-    
-    module.exports.rest = rest;
-}
+    return;
+  }
 
-function getIndex(req, res) {
-    res.render('index', {about:about});
-}
-
-function postLine(req, res) {
-    var response = {
-        success : false,
-        message : ''
-    };
+  // render helpers
+  function renderError(req, res, data) {
+    if (req.url.indexOf('/api') == 0) {
+      // JSON response
+      renderJSONError(req, res, data);
+    }
+    else {
+      // HTML response
+    }
+  }
+  function renderJSONError(req, res, data) {
+    res.send(_.extend({
+      message : '',
+      payload : ''
+    }, data, {success:false}));
+  }
+  function renderHTMLError(req, res, data) {
+    var viewPath   = path.join(req.app.parent.settings.views, '500');
+    var layoutPath = path.join(req.app.parent.settings.views, 'layout');
     
-    var text = req.body && req.body.text || '';
-    if (text == '') {
-        res.writeHead(200, {'Content-Type': 'application/json'});
-        res.end(JSON.stringify(response));
-        return;
+    res.render(viewPath, {
+      status  : 500,
+      layout  : layoutPath,
+      request : req,
+      msg     : data.message
+    });
+  }
+  function renderSuccess(req, res, data) {
+    if (req.url.indexOf('/api') == 0) {
+      // JSON response
+      renderJSONSuccess(req, res, data);
+    }
+    else {
+      // HTML response
+      renderHTMLSuccess(req, res, data);
+    }
+  }
+  function renderJSONSuccess(req, res, data) {
+    res.send(_.extend({
+      message : '',
+      payload : ''
+    }, data, {success:true}));
+  }
+  function renderHTMLSuccess(req, res, data) {
+  }
+  
+  function isReady() {
+    if (config == null || total == null) {
+      return false;
     }
     
-    var args = {
-        q       : text,
-        start   : 0,
-        rows    : 3,
-        indent  : 'off',
-        wt      : 'json'
-    };
-    
-    var url      = solrUrl + '?' + serializeArgs(args)
-        ,request = Rest.get(url, {followRedirects:true});
-    
-    request.on('success', function(data) {
-        try { data = JSON.parse(data); } catch(e) { data = {}; }
-        
-        if (!data.response || !data.response.docs) {
-            response.message = 'search server error';
-            res.writeHead(200, {'Content-Type': 'application/json'});
-            res.end(JSON.stringify(response));
-            return;
-        }
-        
-        var lines = data.response.docs;
-        if (lines.length < 1) {
-            response.success = true;
-            response.payload = 'I don\'t know what to tell you';
-            res.writeHead(200, {'Content-Type': 'application/json'});
-            res.end(JSON.stringify(response));
-            return;
-        }
-        
-        var idx = Math.round(Math.random()*(lines.length-1))
-        var doc = lines[idx] || {text:'I don\'t know what to tell you'};
-        
-        if (doc.text == text) {
-            response.success = true;
-            response.payload = 'I don\'t know what to tell you';
-            res.writeHead(200, {'Content-Type': 'application/json'});
-            res.end(JSON.stringify(response));
-            return;
-        }
-        
-        response.success = true;
-        response.payload = doc.text;
-        res.writeHead(200, {'Content-Type': 'application/json'});
-        res.end(JSON.stringify(response));
+    return true;
+  }
+  
+  // loads total number of documents
+  function loadGlobals() {
+    var query = client.createQuery().
+      q('*:*').
+      fl(['id']).
+      start(0).
+      rows(1000000);
+
+    client.search(query, function(err, json) {
+      setTimeout(loadGlobals, 5*60*1000);
+
+      if (err) {
+        console.log(err);
+        return;
+      }
+      if (!json.response || !json.response.docs) {
+        console.log(json);
+        return;
+      }
+
+      total = json.response.numFound;
     });
-    request.on('error', function(error) {
-        response.message = 'search server error';
-        res.writeHead(200, {'Content-Type': 'application/json'});
-        res.end(JSON.stringify(response));
-    });
+  }
+
+  loadGlobals();
+
+  module.exports.rest = rest;
 }
 
-function serializeArgs(args) {
-    var tokens = _.reduce(args, function(memo, arg, key, args) {
-        var list = Array.isArray(arg) ? arg : [arg];
-        
-        for (var i = 0; i < list.length; i++) {
-            memo.push(key + '=' +  encodeURIComponent(list[i]));
-        }
-        
-        return memo;
-    }, []);
-    
-    return tokens.join('&') || '';
-}
 
 

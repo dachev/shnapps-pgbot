@@ -23,7 +23,7 @@ $(function() {
         
         addLine('me', text);
         
-        $.post('/pgbot/line', {text:text}, function(response, status) {
+        $.post('/pgbot/api/line', {text:text}, function(response, status) {
             var text = (response.success == true) ? response.payload : 'server error';
             addLine('paul', text);
         });
