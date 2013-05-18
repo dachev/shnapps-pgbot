@@ -18,10 +18,10 @@ module.exports = {
   production:{
     services: {
       scrape : {
-        url : 'http://localhost/scrape/api/v1/scrape'
+        url : 'http://blago.dachev.com/scrape/api/v1/scrape'
       },
       sentences : {
-        url : 'http://localhost/sentences/api/v1/sentences'
+        url : 'http://blago.dachev.com/sentences/api/v1/sentences'
       }
     },
     solr:{
