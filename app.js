@@ -98,8 +98,8 @@ function api1PostLine(req, res, next) {
   }
 
   var text  = req.body.text;
-  var query = client.createQuery().q(text).start(0).rows(3);
-
+  var query = client.createQuery().q('text:'+text).start(0).rows(3);
+  
   client.search(query, function(err, json) {
     if (err) {
       return renderError(req, res, 500, {
