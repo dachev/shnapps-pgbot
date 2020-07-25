@@ -48,7 +48,7 @@ function initExpress(config, rest, cb) {
   cb(null);
 }
 function initSolr(config, rest, cb) {
-  client = solr.createClient(config.solr);
+  client = solr.createClient(config.services.solr);
 
   loadGlobals();
 
